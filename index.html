@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Симуляция частиц (Гибридная: WebGPU + CPU)</title>
+  <style>
+    #simulation {
+      touch-action: none; /* Отключает системные жесты браузера (скролл, зум всей страницы) на канвасе */
+    }
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: #1a1a1a;
+      color: white;
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    #canvas-container {
+      margin-bottom: 20px;
+      border: 1px solid #555; /* Граница для канваса */
+    }
+    #controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); /* Адаптивная сетка */
+      gap: 20px;
+      margin-bottom: 20px;
+      width: 100%;
+      max-width: 1200px; /* Немного шире для удобства */
+    }
+    .group-controls {
+      background-color: #333;
+      padding: 15px;
+      border-radius: 10px;
+    }
+    .group-title {
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 18px;
+    }
+    .control-row {
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap; /* Для маленьких экранов */
+    }
+    .control-label {
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+    input[type="range"] {
+      flex-grow: 1;
+      min-width: 100px; /* Чтобы не сжимался слишком сильно */
+    }
+    input[type="number"] {
+      width: 60px;
+    }
+    input[type="color"] {
+      cursor: pointer;
+      min-width: 40px; /* Размер для color picker */
+      height: 30px;
+    }
+    button {
+      padding: 10px;
+      margin: 5px;
+      cursor: pointer;
+      background-color: #4a4a4a;
+      border: none;
+      color: white;
+      border-radius: 5px;
+    }
+    button:hover {
+      background-color: #666;
+    }
+    #global-controls {
+      background-color: #333;
+      padding: 15px;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 1200px;
+      margin-bottom: 20px;
+    }
+    #stats {
+      background-color: #333;
+      padding: 15px;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 1200px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>Интерактивная симуляция частиц (Гибридная: WebGPU + CPU)</h1>
+  <div id="canvas-container">
+    <canvas id="simulation" width="800" height="600"></canvas>
+  </div>
+  
+  <div id="global-controls">
+    <div class="group-title">Глобальные настройки</div>
+    <div class="control-row">
+      <span class="control-label font-bold" style="color: #4ade80;">Режим движка:</span>
+      <span id="engine-mode" style="font-weight: bold; text-transform: uppercase; color: #4ade80;">Проверка...</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Скорость симуляции:</span>
+      <input type="range" id="simulation-speed" min="0.1" max="2" step="0.1" value="1">
+      <span id="simulation-speed-value">1.0</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Размер частиц:</span>
+      <input type="range" id="particle-size" min="1" max="10" step="1" value="2">
+      <span id="particle-size-value">2</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Радиус взаимодействия (Глобальный):</span>
+      <input type="range" id="interaction-radius" min="10" max="150" step="5" value="50">
+      <span id="interaction-radius-value">50</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Зона отталкивания (% от радиуса):</span>
+      <input type="range" id="min-radius-ratio" min="5" max="50" step="1" value="20">
+      <span id="min-radius-ratio-value">20%</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Сила близкого отталкивания:</span>
+      <input type="range" id="repel-force" min="0.1" max="5" step="0.1" value="1.0">
+      <span id="repel-force-value">1.0</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Затухание скорости:</span>
+      <input type="range" id="velocity-damping" min="0.1" max="0.99" step="0.01" value="0.5">
+      <span id="velocity-damping-value">0.50</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Сила взаимодействия:</span>
+      <input type="range" id="force-multiplier" min="0.01" max="5" step="0.01" value="1">
+      <span id="force-multiplier-value">1.00</span>
+    </div>
+    <div class="control-row">
+      <span class="control-label">Фон:</span>
+      <input type="color" id="background-color" value="#000000">
+    </div>
+    <div class="control-row">
+      <span class="control-label">Максимальное количество частиц:</span>
+      <input type="number" id="max-particles" min="0" value="2000">
+    </div>
+    <div class="control-row" style="justify-content: center;">
+      <button id="reset-simulation">Сбросить симуляцию</button>
+      <button id="pause-simulation">Пауза</button>
+      <button id="random-rules">Случайные свойства</button>
+      <button id="randomize-counts">Рандомизировать количество</button>
+    </div>
+  </div>
+  
+  <div id="controls">
+    <!-- Желтые -->
+    <div class="group-controls" id="yellow-controls">
+      <div class="group-title">Желтые частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="yellow-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="yellow-color" value="#ffff00"></div>
+      <!-- Силы -->
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="yellow-yellow" min="-1" max="1" step="0.01" value="0.15"><span id="yellow-yellow-value">0.15</span></div>
+      <div class="control-row"><span class="control-label">К красным:</span><input type="range" id="yellow-red" min="-1" max="1" step="0.01" value="-0.20"><span id="yellow-red-value">-0.20</span></div>
+      <div class="control-row"><span class="control-label">К зеленым:</span><input type="range" id="yellow-green" min="-1" max="1" step="0.01" value="0"><span id="yellow-green-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К синим:</span><input type="range" id="yellow-blue" min="-1" max="1" step="0.01" value="0"><span id="yellow-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К фиолетовым:</span><input type="range" id="yellow-purple" min="-1" max="1" step="0.01" value="0"><span id="yellow-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К оранжевым:</span><input type="range" id="yellow-orange" min="-1" max="1" step="0.01" value="0"><span id="yellow-orange-value">0.00</span></div>
+      <!-- Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="yellow-yellow-radius" min="10" max="150" step="1" value="50"><span id="yellow-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к красным:</span><input type="range" id="yellow-red-radius" min="10" max="150" step="1" value="50"><span id="yellow-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к зеленым:</span><input type="range" id="yellow-green-radius" min="10" max="150" step="1" value="50"><span id="yellow-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к синим:</span><input type="range" id="yellow-blue-radius" min="10" max="150" step="1" value="50"><span id="yellow-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к фиолетовым:</span><input type="range" id="yellow-purple-radius" min="10" max="150" step="1" value="50"><span id="yellow-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к оранжевым:</span><input type="range" id="yellow-orange-radius" min="10" max="150" step="1" value="50"><span id="yellow-orange-radius-value">50</span></div>
+    </div>
+    <!-- Красные -->
+    <div class="group-controls" id="red-controls">
+      <div class="group-title">Красные частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="red-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="red-color" value="#ff0000"></div>
+      <!-- Силы -->
+      <div class="control-row"><span class="control-label">К желтым:</span><input type="range" id="red-yellow" min="-1" max="1" step="0.01" value="0"><span id="red-yellow-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="red-red" min="-1" max="1" step="0.01" value="-0.10"><span id="red-red-value">-0.10</span></div>
+      <div class="control-row"><span class="control-label">К зеленым:</span><input type="range" id="red-green" min="-1" max="1" step="0.01" value="-0.34"><span id="red-green-value">-0.34</span></div>
+      <div class="control-row"><span class="control-label">К синим:</span><input type="range" id="red-blue" min="-1" max="1" step="0.01" value="0"><span id="red-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К фиолетовым:</span><input type="range" id="red-purple" min="-1" max="1" step="0.01" value="0"><span id="red-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К оранжевым:</span><input type="range" id="red-orange" min="-1" max="1" step="0.01" value="0"><span id="red-orange-value">0.00</span></div>
+      <!-- Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к желтым:</span><input type="range" id="red-yellow-radius" min="10" max="150" step="1" value="50"><span id="red-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="red-red-radius" min="10" max="150" step="1" value="50"><span id="red-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к зеленым:</span><input type="range" id="red-green-radius" min="10" max="150" step="1" value="50"><span id="red-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к синим:</span><input type="range" id="red-blue-radius" min="10" max="150" step="1" value="50"><span id="red-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к фиолетовым:</span><input type="range" id="red-purple-radius" min="10" max="150" step="1" value="50"><span id="red-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к оранжевым:</span><input type="range" id="red-orange-radius" min="10" max="150" step="1" value="50"><span id="red-orange-radius-value">50</span></div>
+    </div>
+    <!-- Зеленые -->
+     <div class="group-controls" id="green-controls">
+      <div class="group-title">Зеленые частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="green-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="green-color" value="#00ff00"></div>
+      <!-- СИЛЫ -->
+      <div class="control-row"><span class="control-label">К желтым:</span><input type="range" id="green-yellow" min="-1" max="1" step="0.01" value="0.34"><span id="green-yellow-value">0.34</span></div>
+      <div class="control-row"><span class="control-label">К красным:</span><input type="range" id="green-red" min="-1" max="1" step="0.01" value="-0.17"><span id="green-red-value">-0.17</span></div>
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="green-green" min="-1" max="1" step="0.01" value="-0.32"><span id="green-green-value">-0.32</span></div>
+      <div class="control-row"><span class="control-label">К синим:</span><input type="range" id="green-blue" min="-1" max="1" step="0.01" value="0"><span id="green-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К фиолетовым:</span><input type="range" id="green-purple" min="-1" max="1" step="0.01" value="0"><span id="green-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К оранжевым:</span><input type="range" id="green-orange" min="-1" max="1" step="0.01" value="0"><span id="green-orange-value">0.00</span></div>
+      <!-- Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к желтым:</span><input type="range" id="green-yellow-radius" min="10" max="150" step="1" value="50"><span id="green-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к красным:</span><input type="range" id="green-red-radius" min="10" max="150" step="1" value="50"><span id="green-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="green-green-radius" min="10" max="150" step="1" value="50"><span id="green-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к синим:</span><input type="range" id="green-blue-radius" min="10" max="150" step="1" value="50"><span id="green-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к фиолетовым:</span><input type="range" id="green-purple-radius" min="10" max="150" step="1" value="50"><span id="green-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к оранжевым:</span><input type="range" id="green-orange-radius" min="10" max="150" step="1" value="50"><span id="green-orange-radius-value">50</span></div>
+    </div>
+    <!-- Синие -->
+    <div class="group-controls" id="blue-controls">
+      <div class="group-title">Синие частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="blue-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="blue-color" value="#0000ff"></div>
+      <!-- СИЛЫ -->
+      <div class="control-row"><span class="control-label">К желтым:</span><input type="range" id="blue-yellow" min="-1" max="1" step="0.01" value="0"><span id="blue-yellow-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К красным:</span><input type="range" id="blue-red" min="-1" max="1" step="0.01" value="0"><span id="blue-red-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К зеленым:</span><input type="range" id="blue-green" min="-1" max="1" step="0.01" value="0"><span id="blue-green-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="blue-blue" min="-1" max="1" step="0.01" value="0"><span id="blue-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К фиолетовым:</span><input type="range" id="blue-purple" min="-1" max="1" step="0.01" value="0"><span id="blue-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К оранжевым:</span><input type="range" id="blue-orange" min="-1" max="1" step="0.01" value="0"><span id="blue-orange-value">0.00</span></div>
+      <!-- Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к желтым:</span><input type="range" id="blue-yellow-radius" min="10" max="150" step="1" value="50"><span id="blue-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к красным:</span><input type="range" id="blue-red-radius" min="10" max="150" step="1" value="50"><span id="blue-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к зеленым:</span><input type="range" id="blue-green-radius" min="10" max="150" step="1" value="50"><span id="blue-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="blue-blue-radius" min="10" max="150" step="1" value="50"><span id="blue-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к фиолетовым:</span><input type="range" id="blue-purple-radius" min="10" max="150" step="1" value="50"><span id="blue-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к оранжевым:</span><input type="range" id="blue-orange-radius" min="10" max="150" step="1" value="50"><span id="blue-orange-radius-value">50</span></div>
+    </div>
+    <!-- Фиолетовые -->
+    <div class="group-controls" id="purple-controls">
+      <div class="group-title">Фиолетовые частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="purple-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="purple-color" value="#800080"></div>
+      <!-- СИЛЫ -->
+      <div class="control-row"><span class="control-label">К желтым:</span><input type="range" id="purple-yellow" min="-1" max="1" step="0.01" value="0"><span id="purple-yellow-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К красным:</span><input type="range" id="purple-red" min="-1" max="1" step="0.01" value="0"><span id="purple-red-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К зеленым:</span><input type="range" id="purple-green" min="-1" max="1" step="0.01" value="0"><span id="purple-green-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К синим:</span><input type="range" id="purple-blue" min="-1" max="1" step="0.01" value="0"><span id="purple-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="purple-purple" min="-1" max="1" step="0.01" value="0"><span id="purple-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К оранжевым:</span><input type="range" id="purple-orange" min="-1" max="1" step="0.01" value="0"><span id="purple-orange-value">0.00</span></div>
+      <!--  Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к желтым:</span><input type="range" id="purple-yellow-radius" min="10" max="150" step="1" value="50"><span id="purple-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к красным:</span><input type="range" id="purple-red-radius" min="10" max="150" step="1" value="50"><span id="purple-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к зеленым:</span><input type="range" id="purple-green-radius" min="10" max="150" step="1" value="50"><span id="purple-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к синим:</span><input type="range" id="purple-blue-radius" min="10" max="150" step="1" value="50"><span id="purple-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="purple-purple-radius" min="10" max="150" step="1" value="50"><span id="purple-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к оранжевым:</span><input type="range" id="purple-orange-radius" min="10" max="150" step="1" value="50"><span id="purple-orange-radius-value">50</span></div>
+    </div>
+    <!-- Оранжевые -->
+    <div class="group-controls" id="orange-controls">
+      <div class="group-title">Оранжевые частицы</div>
+      <div class="control-row"><span class="control-label">Количество:</span><input type="number" id="orange-count" min="0" value="200"></div>
+      <div class="control-row"><span class="control-label">Цвет:</span><input type="color" id="orange-color" value="#ffa500"></div>
+      <!-- СИЛЫ -->
+      <div class="control-row"><span class="control-label">К желтым:</span><input type="range" id="orange-yellow" min="-1" max="1" step="0.01" value="0"><span id="orange-yellow-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К красным:</span><input type="range" id="orange-red" min="-1" max="1" step="0.01" value="0"><span id="orange-red-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К зеленым:</span><input type="range" id="orange-green" min="-1" max="1" step="0.01" value="0"><span id="orange-green-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К синим:</span><input type="range" id="orange-blue" min="-1" max="1" step="0.01" value="0"><span id="orange-blue-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К фиолетовым:</span><input type="range" id="orange-purple" min="-1" max="1" step="0.01" value="0"><span id="orange-purple-value">0.00</span></div>
+      <div class="control-row"><span class="control-label">К себе:</span><input type="range" id="orange-orange" min="-1" max="1" step="0.01" value="0"><span id="orange-orange-value">0.00</span></div>
+      <!--  Радиусы -->
+      <div class="control-row"><span class="control-label">Радиус к желтым:</span><input type="range" id="orange-yellow-radius" min="10" max="150" step="1" value="50"><span id="orange-yellow-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к красным:</span><input type="range" id="orange-red-radius" min="10" max="150" step="1" value="50"><span id="orange-red-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к зеленым:</span><input type="range" id="orange-green-radius" min="10" max="150" step="1" value="50"><span id="orange-green-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к синим:</span><input type="range" id="orange-blue-radius" min="10" max="150" step="1" value="50"><span id="orange-blue-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к фиолетовым:</span><input type="range" id="orange-purple-radius" min="10" max="150" step="1" value="50"><span id="orange-purple-radius-value">50</span></div>
+      <div class="control-row"><span class="control-label">Радиус к себе:</span><input type="range" id="orange-orange-radius" min="10" max="150" step="1" value="50"><span id="orange-orange-radius-value">50</span></div>
+    </div>
+  </div>
+  
+  <div id="stats">
+    <span>FPS: <span id="fps">0</span></span> | 
+    <span>Всего частиц: <span id="particle-count">0</span></span>
+  </div>
+
+  <script>
+    // Основные параметры симуляции
+    const config = {
+      width: 800,
+      height: 600,
+      paused: false,
+      simulationSpeed: 1.0,
+      particleSize: 2,
+      interactionRadius: 50,
+      velocityDamping: 0.5,
+      forceMultiplier: 1.0,
+      backgroundColor: "#000000",
+      repel: 1.0,             // Сила близкого отталкивания
+      minRadiusRatio: 0.2,    // Зона отталкивания (20% от максимального радиуса)
+      useGPU: false           // Флаг использования GPU
+    };
+
+    // Группы частиц (6 групп) с индивидуальными силами и радиусами
+    const groups = {
+      yellow: { count: 200, color: "#ffff00", rules: { yellow: 0.15, red: -0.20, green: 0, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }},
+      red:    { count: 200, color: "#ff0000", rules: { yellow: 0, red: -0.10, green: -0.34, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }},
+      green:  { count: 200, color: "#00ff00", rules: { yellow: 0.34, red: -0.17, green: -0.32, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }},
+      blue:   { count: 200, color: "#0000ff", rules: { yellow: 0, red: 0, green: 0, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }},
+      purple: { count: 200, color: "#800080", rules: { yellow: 0, red: 0, green: 0, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }},
+      orange: { count: 200, color: "#ffa500", rules: { yellow: 0, red: 0, green: 0, blue: 0, purple: 0, orange: 0 }, radii: { yellow: 50, red: 50, green: 50, blue: 50, purple: 50, orange: 50 }}
+    };
+    const groupNames = Object.keys(groups);
+
+    // Функция линейной интерполяции для плавного движения камеры
+    const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+
+    // Объект камеры
+    const camera = {
+      offsetX: 0,         // Текущее смещение по X (для плавной отрисовки)
+      offsetY: 0,         // Текущее смещение по Y (для плавной отрисовки)
+      zoom: 1.0,          // Текущий масштаб
+      targetOffsetX: 0,   // Куда камера должна прийти по X
+      targetOffsetY: 0,   // Куда камера должна прийти по Y
+      targetZoom: 1.0     // До какого масштаба камера должна увеличиться/уменьшиться
+    };
+
+    // Функция центрирования камеры на коробке симуляции 800x600
+    function centerCamera() {
+        camera.targetZoom = 1.0;
+        camera.targetOffsetX = (canvas.width - config.width) / 2;
+        camera.targetOffsetY = (canvas.height - config.height) / 2;
+        // При первом запуске делаем перемещение мгновенным, без сглаживания
+        camera.zoom = camera.targetZoom;
+        camera.offsetX = camera.targetOffsetX;
+        camera.offsetY = camera.targetOffsetY;
+    }
+
+    // Настройка canvas
+    const canvas = document.getElementById("simulation");
+    const ctx = canvas.getContext("2d");
+    canvas.width = config.width;
+    canvas.height = config.height;
+
+    // Отслеживание FPS
+    let lastTime = 0;
+    let frameCount = 0;
+    let fps = 0;
+    const fpsUpdateInterval = 500; // ms
+    let lastFpsUpdate = 0;
+
+    // --- ОПТИМИЗАЦИЯ: TypedArrays и Структуры данных ---
+    const ABSOLUTE_MAX_PARTICLES = 20000; // Максимум для выделения памяти TypedArrays
+    let currentMaxAllocatedParticles = 0; // Сколько реально выделено в TypedArrays
+    let particleCount = 0; // Текущее активное количество частиц
+
+    // Данные частиц
+    let pX, pY, pVX, pVY; // Float32Array для позиций и скоростей
+    let pGroup, pColorIndex;    // Uint8Array для индекса группы и индекса цвета
+
+    const colorLookup = []; // Массив строк цветов для быстрого доступа по индексу
+    const ruleMatrix = [];  // Матрица правил [group1_idx][group2_idx]
+    const radiusMatrix = []; // Матрица индивидуальных радиусов [group1_idx][group2_idx]
+
+    // --- Переменные WebGPU ---
+    let device, webGpuContext;
+    let particleBuffers = []; // [bufferA, bufferB] для пинг-понг вычислений
+    let colorsBuffer, configBuffer, cameraBuffer, matrixBuffer;
+    let computePipeline, renderPipeline;
+    let computeBindGroups = [];
+    let renderBindGroups = [];
+    let currentBufferIndex = 0;
+
+    const COMPUTE_SHADER_CODE = `
+        struct Particle {
+            x: f32,
+            y: f32,
+            vx: f32,
+            vy: f32,
+            group: f32,
+        }
+        struct SimConfig {
+            width: f32,
+            height: f32,
+            particleCount: f32,
+            numGroups: f32,
+            simulationSpeed: f32,
+            particleSize: f32,
+            velocityDamping: f32,
+            forceMultiplier: f32,
+            repel: f32,
+            minRadiusRatio: f32,
+            padding1: f32,
+            padding2: f32,
+        }
+        struct PairData {
+            rule: f32,
+            radius: f32,
+        }
+
+        @group(0) @binding(0) var<storage, read> particlesIn: array<Particle>;
+        @group(0) @binding(1) var<storage, read_write> particlesOut: array<Particle>;
+        @group(0) @binding(2) var<uniform> config: SimConfig;
+        @group(0) @binding(3) var<storage, read> interactionMatrix: array<PairData>;
+
+        fn getForce(dist: f32, maxRadius: f32, rule: f32) -> f32 {
+            let minRadius = maxRadius * config.minRadiusRatio;
+            if (dist < minRadius) {
+                return config.repel * (dist / minRadius - 1.0);
+            } else if (dist < maxRadius) {
+                let mid = (minRadius + maxRadius) * 0.5;
+                let slope = rule / (mid - minRadius);
+                return -(slope * abs(dist - mid)) + rule;
+            }
+            return 0.0;
+        }
+
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+            let index = global_id.x;
+            if (index >= u32(config.particleCount)) { return; }
+
+            var p = particlesIn[index];
+            let typeA = u32(p.group);
+
+            var totalFx = 0.0;
+            var totalFy = 0.0;
+
+            for (var j = 0u; j < u32(config.particleCount); j++) {
+                if (index == j) { continue; }
+
+                let other = particlesIn[j];
+                let typeB = u32(other.group);
+
+                let dx = other.x - p.x;
+                let dy = other.y - p.y;
+                let distSq = dx * dx + dy * dy;
+
+                let pairIndex = typeA * u32(config.numGroups) + typeB;
+                let pair = interactionMatrix[pairIndex];
+                let maxRadius = pair.radius;
+
+                if (distSq > 0.0001 && distSq < maxRadius * maxRadius) {
+                    let dist = sqrt(distSq);
+                    let force = getForce(dist, maxRadius, pair.rule);
+                    if (force != 0.0) {
+                        let F = (force * config.forceMultiplier) / dist;
+                        totalFx += F * dx;
+                        totalFy += F * dy;
+                    }
+                }
+            }
+
+            p.vx = (p.vx + totalFx) * config.velocityDamping;
+            p.vy = (p.vy + totalFy) * config.velocityDamping;
+
+            p.x += p.vx * config.simulationSpeed;
+            p.y += p.vy * config.simulationSpeed;
+
+            let margin = config.particleSize * 0.5;
+            if (p.x <= margin) {
+                p.x = margin + 0.01;
+                p.vx *= -0.5;
+            } else if (p.x >= config.width - margin) {
+                p.x = config.width - margin - 0.01;
+                p.vx *= -0.5;
+            }
+
+            if (p.y <= margin) {
+                p.y = margin + 0.01;
+                p.vy *= -0.5;
+            } else if (p.y >= config.height - margin) {
+                p.y = config.height - margin - 0.01;
+                p.vy *= -0.5;
+            }
+
+            particlesOut[index] = p;
+        }
+    `;
+
+    const RENDER_SHADER_CODE = `
+        struct CameraConfig {
+            offsetX: f32,
+            offsetY: f32,
+            zoom: f32,
+            padding: f32,
+        }
+        struct Particle {
+            x: f32,
+            y: f32,
+            vx: f32,
+            vy: f32,
+            group: f32,
+        }
+        struct SimConfig {
+            width: f32,
+            height: f32,
+            particleCount: f32,
+            numGroups: f32,
+            simulationSpeed: f32,
+            particleSize: f32,
+            velocityDamping: f32,
+            forceMultiplier: f32,
+            repel: f32,
+            minRadiusRatio: f32,
+            padding1: f32,
+            padding2: f32,
+        }
+
+        @group(0) @binding(0) var<storage, read> particles: array<Particle>;
+        @group(0) @binding(1) var<storage, read> colors: array<vec4<f32>>;
+        @group(0) @binding(2) var<uniform> config: SimConfig;
+        @group(1) @binding(0) var<uniform> camera: CameraConfig;
+
+        struct VertexOutput {
+            @builtin(position) position: vec4<f32>,
+            @location(0) color: vec4<f32>,
+            @location(1) uv: vec2<f32>,
+        }
+
+        const POSITIONS = array<vec2<f32>, 4>(
+            vec2<f32>(-1.0, -1.0),
+            vec2<f32>( 1.0, -1.0),
+            vec2<f32>(-1.0,  1.0),
+            vec2<f32>( 1.0,  1.0)
+        );
+
+        @vertex
+        fn vs_main(
+            @builtin(instance_index) instanceIdx: u32,
+            @builtin(vertex_index) vertexIdx: u32
+        ) -> VertexOutput {
+            let p = particles[instanceIdx];
+            let offset = POSITIONS[vertexIdx];
+            
+            let size = config.particleSize * 0.5;
+            let worldPos = vec2<f32>(p.x, p.y) + offset * size;
+
+            let viewPos = (worldPos + vec2<f32>(camera.offsetX, camera.offsetY)) * camera.zoom;
+            
+            let clipX = (viewPos.x / config.width) * 2.0 - 1.0;
+            let clipY = 1.0 - (viewPos.y / config.height) * 2.0;
+
+            var out: VertexOutput;
+            out.position = vec4<f32>(clipX, clipY, 0.0, 1.0);
+            out.color = colors[u32(p.group)];
+            out.uv = offset;
+            return out;
+        }
+
+        @fragment
+        fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+            let r_sq = dot(in.uv, in.uv);
+            if (r_sq > 1.0) {
+                discard;
+            }
+            return in.color;
+        }
+    `;
+
+    // Попытка инициализации графического ускорителя WebGPU
+    async function initWebGpuDevice() {
+        if (!navigator.gpu) {
+            console.warn("Браузер не поддерживает WebGPU. Работаем в режиме CPU.");
+            return false;
+        }
+        try {
+            adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            if (!adapter) return false;
+            device = await adapter.requestDevice();
+            webGpuContext = canvas.getContext("webgpu");
+            const format = navigator.gpu.getPreferredCanvasFormat();
+            webGpuContext.configure({
+                device,
+                format,
+                alphaMode: "opaque"
+            });
+            return true;
+        } catch (e) {
+            console.warn("Сбой инициализации WebGPU. Работаем в режиме CPU:", e);
+            return false;
+        }
+    }
+
+    // Создание шейдеров и биндинг-буферов
+    async function setupWebGpuResources() {
+        // Создаем шейдерные модули
+        const computeModule = device.createShaderModule({ code: COMPUTE_SHADER_CODE });
+        const renderModule = device.createShaderModule({ code: RENDER_SHADER_CODE });
+
+        // Выделение памяти под буферы
+        const bufferSize = ABSOLUTE_MAX_PARTICLES * 5 * 4; // 5 floats на частицу
+        particleBuffers[0] = device.createBuffer({
+            size: bufferSize,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+        });
+        particleBuffers[1] = device.createBuffer({
+            size: bufferSize,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+        });
+
+        colorsBuffer = device.createBuffer({
+            size: 6 * 16, // 6 цветов vec4
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+        });
+
+        configBuffer = device.createBuffer({
+            size: 48, // 12 x f32
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        cameraBuffer = device.createBuffer({
+            size: 16, // vec4f
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+
+        matrixBuffer = device.createBuffer({
+            size: 36 * 8, // 36 пар PairData (rule + radius = 2 floats = 8 bytes)
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+        });
+
+        // Конструктор разметки биндинг-групп
+        const computeBindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // particlesIn
+                { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },          // particlesOut
+                { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },          // config
+                { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }  // interactionMatrix
+            ]
+        });
+
+        // Пинг-понг группы для Compute Pass
+        computeBindGroups[0] = device.createBindGroup({
+            layout: computeBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: particleBuffers[0] } },
+                { binding: 1, resource: { buffer: particleBuffers[1] } },
+                { binding: 2, resource: { buffer: configBuffer } },
+                { binding: 3, resource: { buffer: matrixBuffer } }
+            ]
+        });
+        computeBindGroups[1] = device.createBindGroup({
+            layout: computeBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: particleBuffers[1] } },
+                { binding: 1, resource: { buffer: particleBuffers[0] } },
+                { binding: 2, resource: { buffer: configBuffer } },
+                { binding: 3, resource: { buffer: matrixBuffer } }
+            ]
+        });
+
+        // Разметка для Render Pass
+        const renderBindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+                { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+                { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } }
+            ]
+        });
+
+        renderBindGroups[0] = device.createBindGroup({
+            layout: renderBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: particleBuffers[0] } },
+                { binding: 1, resource: { buffer: colorsBuffer } },
+                { binding: 2, resource: { buffer: configBuffer } }
+            ]
+        });
+        renderBindGroups[1] = device.createBindGroup({
+            layout: renderBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: particleBuffers[1] } },
+                { binding: 1, resource: { buffer: colorsBuffer } },
+                { binding: 2, resource: { buffer: configBuffer } }
+            ]
+        });
+
+        const cameraBindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } }
+            ]
+        });
+
+        cameraBindGroup = device.createBindGroup({
+            layout: cameraBindGroupLayout,
+            entries: [
+                { binding: 0, resource: { buffer: cameraBuffer } }
+            ]
+        });
+
+        // Сборка конвейеров (Pipelines)
+        computePipeline = device.createComputePipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [computeBindGroupLayout] }),
+            compute: { module: computeModule, entryPoint: "main" }
+        });
+
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        renderPipeline = device.createRenderPipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [renderBindGroupLayout, cameraBindGroupLayout] }),
+            vertex: { module: renderModule, entryPoint: "vs_main" },
+            fragment: {
+                module: renderModule,
+                entryPoint: "fs_main",
+                targets: [{
+                    format,
+                    blend: {
+                        color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+                        alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+                    }
+                }]
+            },
+            primitive: { topology: "triangle-strip" }
+        });
+    }
+
+    // Загрузка начальных параметров частиц в буферы GPU
+    function uploadGpuParticles() {
+        if (!config.useGPU) return;
+        const particlesData = new Float32Array(particleCount * 5);
+        for (let i = 0; i < particleCount; i++) {
+            const idx = i * 5;
+            particlesData[idx]     = pX[i];
+            particlesData[idx + 1] = pY[i];
+            particlesData[idx + 2] = pVX[i];
+            particlesData[idx + 3] = pVY[i];
+            particlesData[idx + 4] = pGroup[i];
+        }
+        device.queue.writeBuffer(particleBuffers[0], 0, particlesData);
+        device.queue.writeBuffer(particleBuffers[1], 0, particlesData);
+        currentBufferIndex = 0;
+    }
+
+    // Обновление глобальных физических настроек на GPU
+    function uploadGpuConfig() {
+        if (!config.useGPU) return;
+        const configData = new Float32Array(12);
+        configData[0] = config.width;
+        configData[1] = config.height;
+        configData[2] = particleCount;
+        configData[3] = groupNames.length;
+        configData[4] = config.simulationSpeed;
+        configData[5] = config.particleSize;
+        configData[6] = config.velocityDamping;
+        configData[7] = config.forceMultiplier;
+        configData[8] = config.repel;
+        configData[9] = config.minRadiusRatio;
+        device.queue.writeBuffer(configBuffer, 0, configData);
+    }
+
+    // Загрузка матриц взаимодействия и цветов на GPU
+    function uploadGpuLookupTables() {
+        if (!config.useGPU) return;
+        
+        // Матрица цветов
+        const colorsData = new Float32Array(groupNames.length * 4);
+        groupNames.forEach((name, i) => {
+            const hex = groups[name].color;
+            const rgb = hexToRgb(hex);
+            colorsData[i * 4]     = rgb[0] / 255;
+            colorsData[i * 4 + 1] = rgb[1] / 255;
+            colorsData[i * 4 + 2] = rgb[2] / 255;
+            colorsData[i * 4 + 3] = 1.0;
+        });
+        device.queue.writeBuffer(colorsBuffer, 0, colorsData);
+
+        // Матрица правил и индивидуальных радиусов
+        const matrixData = new Float32Array(groupNames.length * groupNames.length * 2);
+        let idx = 0;
+        for (let i = 0; i < groupNames.length; i++) {
+            const g1 = groupNames[i];
+            for (let j = 0; j < groupNames.length; j++) {
+                const g2 = groupNames[j];
+                matrixData[idx++] = groups[g1].rules[g2];
+                matrixData[idx++] = groups[g1].radii[g2];
+            }
+        }
+        device.queue.writeBuffer(matrixBuffer, 0, matrixData);
+    }
+
+    function hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? [
+            parseInt(result[1], 16),
+            parseInt(result[2], 16),
+            parseInt(result[3], 16)
+        ] : null;
+    }
+
+    function initTypedArrays(maxTotalParticles) {
+        if (maxTotalParticles > ABSOLUTE_MAX_PARTICLES) {
+            console.warn(`Запрошено ${maxTotalParticles} частиц, ограничено до ${ABSOLUTE_MAX_PARTICLES}`);
+            maxTotalParticles = ABSOLUTE_MAX_PARTICLES;
+        }
+        if (!pX || maxTotalParticles > currentMaxAllocatedParticles) {
+            console.log(`Выделение TypedArrays для ${maxTotalParticles} частиц`);
+            pX = new Float32Array(maxTotalParticles);
+            pY = new Float32Array(maxTotalParticles);
+            pVX = new Float32Array(maxTotalParticles);
+            pVY = new Float32Array(maxTotalParticles);
+            pGroup = new Uint8Array(maxTotalParticles);
+            pColorIndex = new Uint8Array(maxTotalParticles);
+            currentMaxAllocatedParticles = maxTotalParticles;
+        }
+    }
+
+    function updateLookupTables() {
+        colorLookup.length = 0;
+        groupNames.forEach(name => colorLookup.push(groups[name].color));
+
+        ruleMatrix.length = 0;
+        radiusMatrix.length = 0; 
+        for (let i = 0; i < groupNames.length; i++) {
+            const g1Name = groupNames[i];
+            const ruleRow = [];
+            const radiusRow = [];
+            for (let j = 0; j < groupNames.length; j++) {
+                const g2Name = groupNames[j];
+                ruleRow.push(groups[g1Name].rules[g2Name] !== undefined ? groups[g1Name].rules[g2Name] : 0);
+                
+                const r = groups[g1Name].radii[g2Name] !== undefined ? groups[g1Name].radii[g2Name] : config.interactionRadius;
+                radiusRow.push(r);
+            }
+            ruleMatrix.push(ruleRow);
+            radiusMatrix.push(radiusRow);
+        }
+        
+        // Если WebGPU активен — передаем новые таблицы в шейдеры
+        uploadGpuLookupTables();
+    }
+    
+    function initSpatialGrid() {
+        let maxRadius = 10;
+        if (radiusMatrix.length > 0) {
+            for (let i = 0; i < radiusMatrix.length; i++) {
+                for (let j = 0; j < radiusMatrix[i].length; j++) {
+                    if (radiusMatrix[i][j] > maxRadius) {
+                        maxRadius = radiusMatrix[i][j];
+                    }
+                }
+            }
+        } else {
+            maxRadius = config.interactionRadius;
+        }
+
+        cellSize = maxRadius;
+        if (cellSize <= 0) cellSize = 1;
+        gridCols = Math.floor(config.width / cellSize) + 1;
+        gridRows = Math.floor(config.height / cellSize) + 1;
+        grid = new Array(gridCols * gridRows);
+        for (let i = 0; i < grid.length; i++) {
+            grid[i] = [];
+        }
+    }
+
+    function populateParticles() {
+        const maxAllowedByUI = parseInt(document.getElementById("max-particles").value);
+        initTypedArrays(maxAllowedByUI);
+
+        particleCount = 0;
+        groupNames.forEach((groupName, groupIndex) => {
+            const groupConfig = groups[groupName];
+            const countForThisGroup = Math.min(groupConfig.count, maxAllowedByUI - particleCount);
+            
+            const colorIdx = groupIndex;
+
+            for (let i = 0; i < countForThisGroup; i++) {
+                if (particleCount >= maxAllowedByUI) break;
+
+                pX[particleCount] = Math.random() * (config.width - 20) + 10;
+                pY[particleCount] = Math.random() * (config.height - 20) + 10;
+                pVX[particleCount] = (Math.random() - 0.5) * 0.5;
+                pVY[particleCount] = (Math.random() - 0.5) * 0.5;
+                pGroup[particleCount] = groupIndex;
+                pColorIndex[particleCount] = colorIdx;
+                particleCount++;
+            }
+        });
+        updateLookupTables();
+        uploadGpuParticles();
+        uploadGpuConfig();
+    }
+    
+    const activePointers = new Map();
+    let isDragging = false;
+    let lastPointerX = 0;
+    let lastPointerY = 0;
+    let prevDistance = 0;
+    let prevMidpoint = { x: 0, y: 0 };
+
+    canvas.addEventListener("pointerdown", (e) => {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        canvas.setPointerCapture(e.pointerId);
+
+        if (activePointers.size === 1) {
+            isDragging = true;
+            lastPointerX = e.clientX;
+            lastPointerY = e.clientY;
+        } else if (activePointers.size === 2) {
+            isDragging = false;
+            const coords = Array.from(activePointers.values());
+            prevDistance = Math.hypot(coords[0].x - coords[1].x, coords[0].y - coords[1].y);
+            prevMidpoint = {
+                x: (coords[0].x + coords[1].x) / 2,
+                y: (coords[0].y + coords[1].y) / 2
+            };
+        }
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+        if (!activePointers.has(e.pointerId)) return;
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        if (activePointers.size === 1 && isDragging) {
+            const dx = e.clientX - lastPointerX;
+            const dy = e.clientY - lastPointerY;
+            camera.targetOffsetX += dx;
+            camera.targetOffsetY += dy;
+            lastPointerX = e.clientX;
+            lastPointerY = e.clientY;
+        } 
+        else if (activePointers.size === 2) {
+            const coords = Array.from(activePointers.values());
+            const currentDistance = Math.hypot(coords[0].x - coords[1].x, coords[0].y - coords[1].y);
+            const currentMidpoint = {
+                x: (coords[0].x + coords[1].x) / 2,
+                y: (coords[0].y + coords[1].y) / 2
+            };
+
+            if (prevDistance > 0 && currentDistance > 0) {
+                const zoomRatio = currentDistance / prevDistance;
+                const zoomFactor = Math.max(0.15, Math.min(8.0, camera.targetZoom * zoomRatio));
+                const scaleChange = zoomFactor / camera.targetZoom;
+
+                const dx = currentMidpoint.x - prevMidpoint.x;
+                const dy = currentMidpoint.y - prevMidpoint.y;
+
+                camera.targetOffsetX = currentMidpoint.x - (currentMidpoint.x - camera.targetOffsetX) * scaleChange + dx;
+                camera.targetOffsetY = currentMidpoint.y - (currentMidpoint.y - camera.targetOffsetY) * scaleChange + dy;
+                
+                camera.targetZoom = zoomFactor;
+                prevDistance = currentDistance;
+                prevMidpoint = currentMidpoint;
+            }
+        }
+    });
+
+    const handlePointerUp = (e) => {
+        activePointers.delete(e.pointerId);
+        canvas.releasePointerCapture(e.pointerId);
+        
+        if (activePointers.size < 2) {
+            prevDistance = 0;
+        }
+        if (activePointers.size === 0) {
+            isDragging = false;
+        } else if (activePointers.size === 1) {
+            const remaining = Array.from(activePointers.values())[0];
+            lastPointerX = remaining.x;
+            lastPointerY = remaining.y;
+            isDragging = true;
+        }
+    };
+    canvas.addEventListener("pointerup", handlePointerUp);
+    canvas.addEventListener("pointercancel", handlePointerUp);
+
+    canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const zoomFactor = Math.max(0.15, Math.min(8.0, camera.targetZoom * (e.deltaY < 0 ? 1.1 : 0.9)));
+        const scaleChange = zoomFactor / camera.targetZoom;
+
+        camera.targetOffsetX = mouseX - (mouseX - camera.targetOffsetX) * scaleChange;
+        camera.targetOffsetY = mouseY - (mouseY - camera.targetOffsetY) * scaleChange;
+        camera.targetZoom = zoomFactor;
+    }, { passive: false });
+    
+    function getForce(dist, maxRadius, rule) {
+        const minRadius = maxRadius * config.minRadiusRatio;
+        
+        if (dist < minRadius) {
+            return config.repel * (dist / minRadius - 1.0);
+        } else if (dist < maxRadius) {
+            const mid = (minRadius + maxRadius) * 0.5;
+            const slope = rule / (mid - minRadius);
+            return -(slope * Math.abs(dist - mid)) + rule;
+        }
+        return 0;
+    }
+
+    function updatePhysics() {
+        if (particleCount === 0) return;
+
+        for (let i = 0; i < grid.length; i++) {
+            grid[i].length = 0;
+        }
+
+        for (let i = 0; i < particleCount; i++) {
+            const x = Math.max(0, Math.min(pX[i], config.width -1));
+            const y = Math.max(0, Math.min(pY[i], config.height -1));
+            const cX = Math.floor(x / cellSize);
+            const cY = Math.floor(y / cellSize);
+            if (cX >= 0 && cX < gridCols && cY >= 0 && cY < gridRows) {
+                 grid[cY * gridCols + cX].push(i);
+            }
+        }
+        
+        const forceMult = config.forceMultiplier;
+        const damping = config.velocityDamping;
+        const simSpeed = config.simulationSpeed;
+
+        for (let i = 0; i < particleCount; i++) {
+            let totalFx = 0;
+            let totalFy = 0;
+            
+            const currentGroupIdx = pGroup[i];
+            const pxi = pX[i];
+            const pyi = pY[i];
+            
+            const cellX = Math.floor(pxi / cellSize);
+            const cellY = Math.floor(pyi / cellSize);
+
+            for (let offsetY = -1; offsetY <= 1; offsetY++) {
+                for (let offsetX = -1; offsetX <= 1; offsetX++) {
+                    const queryCellX = cellX + offsetX;
+                    const queryCellY = cellY + offsetY;
+
+                    if (queryCellX >= 0 && queryCellX < gridCols && queryCellY >= 0 && queryCellY < gridRows) {
+                        const cellParticleIndices = grid[queryCellY * gridCols + queryCellX];
+                        for (let j = 0; j < cellParticleIndices.length; j++) {
+                            const neighborIdx = cellParticleIndices[j];
+                            if (i === neighborIdx) continue;
+
+                            // Вектор направлен ОТ текущей частицы К соседу
+                            const dx = pX[neighborIdx] - pxi;
+                            const dy = pY[neighborIdx] - pyi;
+                            const distSq = dx * dx + dy * dy;
+
+                            const neighborGroupIdx = pGroup[neighborIdx];
+                            const maxRadius = radiusMatrix[currentGroupIdx][neighborGroupIdx];
+                            const maxRadiusSq = maxRadius * maxRadius;
+
+                            if (distSq > 0.0001 && distSq < maxRadiusSq) {
+                                const dist = Math.sqrt(distSq);
+                                const rule = ruleMatrix[currentGroupIdx][neighborGroupIdx];
+                                const force = getForce(dist, maxRadius, rule);
+                                
+                                if (force !== 0) {
+                                    const F = (force * forceMult) / dist;
+                                    totalFx += F * dx;
+                                    totalFy += F * dy;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            pVX[i] = (pVX[i] + totalFx) * damping;
+            pVY[i] = (pVY[i] + totalFy) * damping;
+        }
+
+        for (let i = 0; i < particleCount; i++) {
+            pX[i] += pVX[i] * simSpeed;
+            pY[i] += pVY[i] * simSpeed;
+
+            if (pX[i] <= 0) { pX[i] = 0.01; pVX[i] *= -0.5; }
+            else if (pX[i] >= config.width) { pX[i] = config.width - 0.01; pVX[i] *= -0.5; }
+            
+            if (pY[i] <= 0) { pY[i] = 0.01; pVY[i] *= -0.5; }
+            else if (pY[i] >= config.height) { pY[i] = config.height - 0.01; pVY[i] *= -0.5; }
+        }
+    }
+
+    function drawParticles() {
+        ctx.fillStyle = config.backgroundColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(camera.offsetX, camera.offsetY);
+        ctx.scale(camera.zoom, camera.zoom);
+
+        ctx.strokeStyle = "#555555";
+        ctx.lineWidth = 1 / camera.zoom;
+        ctx.strokeRect(0, 0, config.width, config.height);
+
+        const particleSize = config.particleSize;
+        const halfSize = particleSize / 2;
+
+        for (let colorIdx = 0; colorIdx < colorLookup.length; colorIdx++) {
+            ctx.fillStyle = colorLookup[colorIdx];
+            for (let i = 0; i < particleCount; i++) {
+                if (pColorIndex[i] === colorIdx) {
+                    ctx.fillRect(
+                        pX[i] - halfSize,
+                        pY[i] - halfSize,
+                        particleSize,
+                        particleSize
+                    );
+                }
+            }
+        }
+        ctx.restore();
+    }
+    
+    // Выполнение кадра на GPU
+    function runWebGpuFrame() {
+        // Загружаем текущие плавно интерполированные координаты камеры на GPU
+        const cameraData = new Float32Array(4);
+        cameraData[0] = camera.offsetX;
+        cameraData[1] = camera.offsetY;
+        cameraData[2] = camera.zoom;
+        device.queue.writeBuffer(cameraBuffer, 0, cameraData);
+
+        const commandEncoder = device.createCommandEncoder();
+
+        // 1. Считаем физику через Compute Pass (если не на паузе)
+        if (!config.paused) {
+            const computePass = commandEncoder.beginComputePass();
+            computePass.setPipeline(computePipeline);
+            computePass.setBindGroup(0, computeBindGroups[currentBufferIndex]);
+            computePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+            computePass.end();
+            
+            // Меняем буферы местами (пинг-понг)
+            currentBufferIndex = 1 - currentBufferIndex;
+        }
+
+        // 2. Рисуем частицы через Render Pass
+        const bgRgb = hexToRgb(config.backgroundColor) || [0, 0, 0];
+        const renderPassDesc = {
+            colorAttachments: [{
+                view: webGpuContext.getCurrentTexture().createView(),
+                loadOp: "clear",
+                clearValue: { r: bgRgb[0] / 255, g: bgRgb[1] / 255, b: bgRgb[2] / 255, a: 1.0 },
+                storeOp: "store"
+            }]
+        };
+
+        const renderPass = commandEncoder.beginRenderPass(renderPassDesc);
+        renderPass.setPipeline(renderPipeline);
+        renderPass.setBindGroup(0, renderBindGroups[currentBufferIndex]);
+        renderPass.setBindGroup(1, cameraBindGroup);
+        renderPass.draw(4, particleCount); // 4 вершины (квадрат) на инстанс
+        renderPass.end();
+
+        device.queue.submit([commandEncoder.finish()]);
+    }
+
+    function update(currentTime) {
+        if (!lastTime) lastTime = currentTime;
+        lastTime = currentTime;
+        
+        frameCount++;
+        if (currentTime - lastFpsUpdate > fpsUpdateInterval) {
+            fps = Math.round((frameCount * 1000) / (currentTime - lastFpsUpdate));
+            lastFpsUpdate = currentTime;
+            frameCount = 0;
+            document.getElementById("fps").textContent = fps;
+            document.getElementById("particle-count").textContent = particleCount;
+        }
+        
+        camera.zoom = lerp(camera.zoom, camera.targetZoom, 0.15);
+        camera.offsetX = lerp(camera.offsetX, camera.targetOffsetX, 0.15);
+        camera.offsetY = lerp(camera.offsetY, camera.targetOffsetY, 0.15);
+        
+        if (config.useGPU) {
+            runWebGpuFrame(); // Рендерим на GPU
+        } else {
+            if (!config.paused) {
+                updatePhysics(); // Рендерим на CPU
+            }
+            drawParticles();
+        }
+        requestAnimationFrame(update);
+    }
+    
+    async function initSimulation() {
+        const maxPUI = parseInt(document.getElementById("max-particles").value);
+        initTypedArrays(maxPUI);
+        populateParticles();
+        initSpatialGrid();
+        updateLookupTables();
+        centerCamera();
+
+        // Проверяем аппаратную поддержку WebGPU
+        const gpuSuccess = await initWebGpuDevice();
+        if (gpuSuccess) {
+            config.useGPU = true;
+            document.getElementById("engine-mode").textContent = "WebGPU (Видеокарта)";
+            document.getElementById("engine-mode").style.color = "#a855f7"; // Фиолетовый неон для GPU
+            await setupWebGpuResources();
+            uploadGpuParticles();
+            uploadGpuConfig();
+            uploadGpuLookupTables();
+        } else {
+            config.useGPU = false;
+            document.getElementById("engine-mode").textContent = "CPU (Процессор)";
+            document.getElementById("engine-mode").style.color = "#38bdf8"; // Голубой для CPU
+        }
+        
+        requestAnimationFrame(update);
+    }
+    
+    function resetSimulation() {
+        populateParticles(); 
+    }
+
+    function randomizeParticleCounts() {
+        const maxTotalParticlesUI = parseInt(document.getElementById("max-particles").value);
+        initTypedArrays(maxTotalParticlesUI);
+
+        const numGroups = groupNames.length;
+        if (numGroups === 0) return;
+
+        let totalFraction = 0;
+        const fractions = groupNames.map(() => {
+            const fraction = Math.random();
+            totalFraction += fraction;
+            return fraction;
+        });
+        
+        let particlesToDistribute = maxTotalParticlesUI;
+        for (let i = 0; i < numGroups; i++) {
+            const groupName = groupNames[i];
+            let count;
+            if (i === numGroups - 1) {
+                count = Math.max(0, particlesToDistribute);
+            } else {
+                const normalizedFraction = totalFraction > 0 ? fractions[i] / totalFraction : 1/numGroups;
+                count = Math.floor(normalizedFraction * maxTotalParticlesUI);
+                count = Math.min(count, particlesToDistribute - (numGroups - 1 - i)); 
+            }
+            count = Math.max(0, count);
+            groups[groupName].count = count;
+            document.getElementById(`${groupName}-count`).value = count;
+            particlesToDistribute -= count;
+        }
+        
+        if (particlesToDistribute > 0) {
+            groups[groupNames[0]].count += particlesToDistribute;
+             document.getElementById(`${groupNames[0]}-count`).value = groups[groupNames[0]].count;
+        }
+
+        populateParticles();
+    }
+    
+    function randomizeRules() {
+        for (const g1Name of groupNames) {
+            for (const g2Name of groupNames) {
+                // Силы (от -1.00 до 1.00)
+                const value = (Math.random() * 2 - 1);
+                groups[g1Name].rules[g2Name] = parseFloat(value.toFixed(2));
+                
+                const sliderId = `${g1Name}-${g2Name}`;
+                const slider = document.getElementById(sliderId);
+                if (slider) {
+                    slider.value = groups[g1Name].rules[g2Name];
+                    updateSliderValueUI(sliderId, groups[g1Name].rules[g2Name]);
+                }
+
+                // Рандомизация индивидуальных радиусов (от 10 до 150)
+                const radiusValue = Math.floor(Math.random() * (150 - 10 + 1) + 10);
+                groups[g1Name].radii[g2Name] = radiusValue;
+
+                const radiusSliderId = `${g1Name}-${g2Name}-radius`;
+                const radiusSlider = document.getElementById(radiusSliderId);
+                if (radiusSlider) {
+                    radiusSlider.value = radiusValue;
+                    updateSliderValueUI(radiusSliderId, radiusValue, 0);
+                }
+            }
+        }
+        updateLookupTables(); // Обновляет матрицы и загружает их на GPU
+        initSpatialGrid();    // Пересчет сетки
+        uploadGpuConfig();
+    }
+    
+    function updateSliderValueUI(id, value, digits = 2) {
+      const elem = document.getElementById(`${id}-value`);
+      if (elem) elem.textContent = parseFloat(value).toFixed(digits);
+    }
+
+    function setupEventListeners() {
+      document.getElementById("simulation-speed").addEventListener("input", function() {
+        config.simulationSpeed = parseFloat(this.value);
+        updateSliderValueUI("simulation-speed", this.value, 1);
+        uploadGpuConfig();
+      });
+      
+      document.getElementById("particle-size").addEventListener("input", function() {
+        config.particleSize = parseInt(this.value);
+        updateSliderValueUI("particle-size", this.value, 0);
+        uploadGpuConfig();
+      });
+      
+      document.getElementById("interaction-radius").addEventListener("input", function() {
+        const newRadius = parseInt(this.value);
+        config.interactionRadius = newRadius;
+        updateSliderValueUI("interaction-radius", this.value, 0);
+        
+        groupNames.forEach(g1 => {
+            groupNames.forEach(g2 => {
+                groups[g1].radii[g2] = newRadius;
+                const radiusSlider = document.getElementById(`${g1}-${g2}-radius`);
+                if (radiusSlider) {
+                    radiusSlider.value = newRadius;
+                    updateSliderValueUI(`${g1}-${g2}-radius`, newRadius, 0);
+                }
+            });
+        });
+        
+        updateLookupTables();
+        initSpatialGrid();
+        uploadGpuConfig();
+      });
+
+      document.getElementById("min-radius-ratio").addEventListener("input", function() {
+        config.minRadiusRatio = parseFloat(this.value) / 100;
+        updateSliderValueUI("min-radius-ratio", this.value, 0);
+        const elem = document.getElementById("min-radius-ratio-value");
+        if (elem) elem.textContent = this.value + "%";
+        uploadGpuConfig();
+      });
+
+      document.getElementById("repel-force").addEventListener("input", function() {
+        config.repel = parseFloat(this.value);
+        updateSliderValueUI("repel-force", this.value, 1);
+        uploadGpuConfig();
+      });
+      
+      document.getElementById("velocity-damping").addEventListener("input", function() {
+        config.velocityDamping = parseFloat(this.value);
+        updateSliderValueUI("velocity-damping", this.value, 2);
+        uploadGpuConfig();
+      });
+      
+      document.getElementById("force-multiplier").addEventListener("input", function() {
+        config.forceMultiplier = parseFloat(this.value);
+        updateSliderValueUI("force-multiplier", this.value, 2);
+        uploadGpuConfig();
+      });
+      
+      document.getElementById("background-color").addEventListener("input", function() {
+        config.backgroundColor = this.value;
+      });
+      
+      document.getElementById("max-particles").addEventListener("change", function() {
+        const newMax = parseInt(this.value);
+        initTypedArrays(newMax);
+        populateParticles();
+      });
+
+      document.getElementById("reset-simulation").addEventListener("click", resetSimulation);
+      
+      document.getElementById("pause-simulation").addEventListener("click", function() {
+        config.paused = !config.paused;
+        this.textContent = config.paused ? "Продолжить" : "Пауза";
+      });
+      
+      document.getElementById("random-rules").addEventListener("click", randomizeRules);
+      document.getElementById("randomize-counts").addEventListener("click", randomizeParticleCounts);
+      
+      groupNames.forEach(groupName => {
+        document.getElementById(`${groupName}-count`).addEventListener("change", function() {
+          groups[groupName].count = parseInt(this.value);
+          populateParticles();
+        });
+        
+        document.getElementById(`${groupName}-color`).addEventListener("input", function() {
+          groups[groupName].color = this.value;
+          updateLookupTables();
+        });
+        
+        groupNames.forEach(targetGroupName => {
+          const sliderId = `${groupName}-${targetGroupName}`;
+          const slider = document.getElementById(sliderId);
+          if (slider) {
+            slider.addEventListener("input", function() {
+              groups[groupName].rules[targetGroupName] = parseFloat(this.value);
+              updateSliderValueUI(sliderId, this.value, 2);
+              updateLookupTables();
+            });
+          }
+
+          // Настройка обработчиков для индивидуальных радиусов
+          const radiusSliderId = `${groupName}-${targetGroupName}-radius`;
+          const radiusSlider = document.getElementById(radiusSliderId);
+          if (radiusSlider) {
+            radiusSlider.addEventListener("input", function() {
+              groups[groupName].radii[targetGroupName] = parseInt(this.value);
+              updateSliderValueUI(radiusSliderId, this.value, 0);
+              updateLookupTables();
+              initSpatialGrid();
+              uploadGpuConfig();
+            });
+          }
+        });
+      });
+    }
+    
+    function initUIValues() {
+        document.getElementById("simulation-speed").value = config.simulationSpeed;
+        updateSliderValueUI("simulation-speed", config.simulationSpeed, 1);
+        document.getElementById("particle-size").value = config.particleSize;
+        updateSliderValueUI("particle-size", config.particleSize, 0);
+        document.getElementById("interaction-radius").value = config.interactionRadius;
+        updateSliderValueUI("interaction-radius", config.interactionRadius, 0);
+        document.getElementById("velocity-damping").value = config.velocityDamping;
+        updateSliderValueUI("velocity-damping", config.velocityDamping, 2);
+        document.getElementById("force-multiplier").value = config.forceMultiplier;
+        updateSliderValueUI("force-multiplier", config.forceMultiplier, 2);
+        document.getElementById("background-color").value = config.backgroundColor;
+
+        document.getElementById("min-radius-ratio").value = config.minRadiusRatio * 100;
+        const ratioElem = document.getElementById("min-radius-ratio-value");
+        if (ratioElem) ratioElem.textContent = (config.minRadiusRatio * 100) + "%";
+
+        document.getElementById("repel-force").value = config.repel;
+        updateSliderValueUI("repel-force", config.repel, 1);
+        
+        let currentTotalParticles = 0;
+        groupNames.forEach(groupName => {
+            currentTotalParticles += groups[groupName].count;
+            document.getElementById(`${groupName}-count`).value = groups[groupName].count;
+            document.getElementById(`${groupName}-color`).value = groups[groupName].color;
+            for (const targetGroup in groups[groupName].rules) {
+                const sliderId = `${groupName}-${targetGroup}`;
+                const slider = document.getElementById(sliderId);
+                if (slider) {
+                    slider.value = groups[groupName].rules[targetGroup];
+                    updateSliderValueUI(sliderId, groups[groupName].rules[targetGroup], 2);
+                }
+            }
+
+            // Инициализируем 36 слайдеров радиусов
+            for (const targetGroup in groups[groupName].radii) {
+                const radiusSliderId = `${groupName}-${targetGroup}-radius`;
+                const radiusSlider = document.getElementById(radiusSliderId);
+                if (radiusSlider) {
+                    radiusSlider.value = groups[groupName].radii[targetGroup];
+                    updateSliderValueUI(radiusSliderId, groups[groupName].radii[targetGroup], 0);
+                }
+            }
+        });
+        document.getElementById("max-particles").value = Math.max(currentTotalParticles, parseInt(document.getElementById("max-particles").value) );
+    }
+
+    function init() {
+      initUIValues();
+      setupEventListeners();
+      initSimulation();
+    }
+
+    window.addEventListener("load", init);
+  </script>
+</body>
+</html>
